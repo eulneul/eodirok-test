@@ -1,10 +1,13 @@
 import csv
-from flask import Blueprint, jsonify, Response, request
-from ..models.save_summary import SummaryDBManager
+from flask import Response, request, jsonify
+from flask_restx import Namespace, Resource, fields
+from models.save_summary import SummaryDBManager
 
-export_bp = Blueprint('export_routes', __name__)
+# Namespace 생성
+export_ns = Namespace('export', description='Export-related operations')
 
-file_path = 'server/models/admin_info.txt'
+# 파일 경로와 DB 정보 읽기
+file_path = 'models/admin_info.txt'
 
 with open(file_path, 'r') as file:
     lines = file.readlines()
@@ -16,7 +19,7 @@ password = lines[3].strip()
 port = int(lines[4].strip())
 
 admin_config = {
-   'host': localhost,
+    'host': localhost,
     'dbname': dbname,
     'user': user,
     'password': password,
@@ -26,72 +29,80 @@ admin_config = {
 # DB 매니저 초기화
 summary_manager = SummaryDBManager(admin_config)
 
-
-@export_bp.route('/export_json_to_csv', methods=['POST'])
-def export_json_to_csv():
-    """
-    JSON 리스트를 입력받아 CSV로 출력
-    """
-    try:
-        # JSON 데이터 요청
-        input_data = request.get_json()
-
-        if not isinstance(input_data, list):
-            return jsonify({"error": "Input data must be a list of objects."}), 400
-
-        if not input_data:
-            return jsonify({"error": "Input data is empty."}), 400
-
-        # CSV 데이터 생성
-        def generate_csv():
-            # Header 생성
-            headers = input_data[0].keys()
-            yield ",".join(headers) + "\n"
-
-            # 데이터 행 생성
-            for row in input_data:
-                yield ",".join([str(row.get(header, "")) for header in headers]) + "\n"
-
-        # Response로 CSV 반환
-        return Response(generate_csv(), mimetype='text/csv', headers={"Content-Disposition": "attachment;filename=exported_data.csv"})
-
-    except Exception as e:
-        print(f"Error exporting JSON to CSV: {e}")
-        return jsonify({"error": str(e)}), 500
+# Swagger 모델 정의
+export_json_model = export_ns.model('ExportJSON', {
+    'name': fields.String(required=True, description='Name of the entity'),
+    'topic': fields.String(required=True, description='Topic of the entity'),
+    'project_at': fields.String(required=True, description='Timestamp of the project')
+})
 
 
-@export_bp.route('/export_table_to_csv/<user_id>/<project_name>', methods=['GET'])
-def export_table_to_csv(user_id, project_name):
-    """
-    특정 사용자와 프로젝트의 테이블 데이터를 CSV로 출력
-    """
-    try:
-        # 사용자 데이터베이스 연결
-        user_connection = summary_manager.connect_user_database(user_id)
+@export_ns.route('/export_json_to_csv')
+class ExportJSONToCSV(Resource):
+    @export_ns.expect([export_json_model])
+    def post(self):
+        """
+        Export JSON data to CSV.
+        """
+        try:
+            input_data = request.get_json()
 
-        # 테이블 데이터 조회
-        query = "SELECT * FROM {table}"
-        results = summary_manager.execute_summary_crud(user_connection, project_name, query)
+            if not isinstance(input_data, list):
+                return {"error": "Input data must be a list of objects."}, 400
 
-        # 연결 닫기
-        summary_manager.close_connection(user_connection)
+            if not input_data:
+                return {"error": "Input data is empty."}, 400
 
-        if not results:
-            return jsonify({"error": "No data found in the table."}), 404
+            # CSV 데이터 생성
+            def generate_csv():
+                headers = input_data[0].keys()
+                yield ",".join(headers) + "\n"
+                for row in input_data:
+                    yield ",".join([str(row.get(header, "")) for header in headers]) + "\n"
 
-        # CSV 데이터 생성
-        def generate_csv():
-            # Header 생성
-            headers = ["id", "name", "topic", "project_at", "created_at", "updated_at"]
-            yield ",".join(headers) + "\n"
+            return Response(
+                generate_csv(),
+                mimetype='text/csv',
+                headers={"Content-Disposition": "attachment;filename=exported_data.csv"}
+            )
 
-            # 데이터 행 생성
-            for row in results:
-                yield ",".join([str(value) for value in row]) + "\n"
+        except Exception as e:
+            print(f"Error exporting JSON to CSV: {e}")
+            return {"error": str(e)}, 500
 
-        # Response로 CSV 반환
-        return Response(generate_csv(), mimetype='text/csv', headers={"Content-Disposition": f"attachment;filename={project_name}_data.csv"})
 
-    except Exception as e:
-        print(f"Error exporting table to CSV: {e}")
-        return jsonify({"error": str(e)}), 500
+@export_ns.route('/export_table_to_csv/<string:user_id>/<string:project_name>')
+class ExportTableToCSV(Resource):
+    def get(self, user_id, project_name):
+        """
+        Export a specific user's project table data to CSV.
+        """
+        try:
+            user_connection = summary_manager.connect_user_database(user_id)
+
+            # 테이블 데이터 조회
+            query = "SELECT * FROM {table}"
+            results = summary_manager.execute_summary_crud(user_connection, project_name, query)
+
+            # 연결 닫기
+            summary_manager.close_connection(user_connection)
+
+            if not results:
+                return {"error": "No data found in the table."}, 404
+
+            # CSV 데이터 생성
+            def generate_csv():
+                headers = ["id", "name", "topic", "project_at", "created_at", "updated_at"]
+                yield ",".join(headers) + "\n"
+                for row in results:
+                    yield ",".join([str(value) for value in row]) + "\n"
+
+            return Response(
+                generate_csv(),
+                mimetype='text/csv',
+                headers={"Content-Disposition": f"attachment;filename={project_name}_data.csv"}
+            )
+
+        except Exception as e:
+            print(f"Error exporting table to CSV: {e}")
+            return {"error": str(e)}, 500

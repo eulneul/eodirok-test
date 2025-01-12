@@ -1,7 +1,7 @@
 import psycopg2
 from psycopg2 import sql
 
-file_path = 'server/models/admin_info.txt'
+file_path = 'models/admin_info.txt'
 
 with open(file_path, 'r') as file:
         lines = file.readlines()
